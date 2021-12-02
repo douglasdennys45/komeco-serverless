@@ -1,0 +1,100 @@
+service: skeleton-node3
+
+frameworkVersion: '2'
+
+provider:
+  name: aws
+  runtime: nodejs14.x
+  lambdaHashingVersion: 20201221
+  stage: dev
+  region: us-east-2
+  environment:
+    SLS_DEBUG: '*'
+    DYNAMODB_TABLE: 'users'
+    QUEUE_NAME: 'sqs-save-user'
+    SNS_NAME: 'sns-save-user'
+    BUCKET_NAME: 's3-save-photo'
+  iam:
+    role:
+      statements:
+        # Criação de DynamoDB
+        - Effect: Allow
+          Action:
+            - dynamodb:Query
+            - dynamodb:Scan
+            - dynamodb:GetItem
+            - dynamodb:PutItem
+            - dynamodb:UpdateItem
+            - dynamodb:DeleteItem
+          Resource: "arn:aws:dynamodb:${opt:region, self:provider.region}:*:table/${self:provider.environment.DYNAMODB_TABLE}"
+        # Criação de SNS
+        - Effect: "Allow"
+          Resource: "*"
+          Action:
+            - "sns:*"
+        # Criação Bucket S3
+        - Effect: Allow
+          Action:
+            - s3:PutObject
+            - s3:PutObjectAcl
+          Resource: "arn:aws:s3:::${self:provider.environment.BUCKET_NAME}/*"
+
+resources:
+  Resources:
+    # Criação DynamoDB
+    UserDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      DeletionPolicy: Retain
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TableName: ${self:provider.environment.DYNAMODB_TABLE}
+    # Criação SQS
+    UserSQSQueue:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: ${self:provider.environment.QUEUE_NAME}
+    UserSNSTopic:
+        Type: "AWS::SNS::Topic"
+        Properties:
+          DisplayName: 'description'
+          TopicName: ${self:provider.environment.SNS_NAME}
+
+custom:
+  esbuild:
+    bundle: true
+    minify: false
+  serverlessPluginTypescript:
+    tsConfigFileLocation: './tsconfig.build.json'
+
+package:
+  individually: true
+
+plugins:
+  - serverless-esbuild
+  - serverless-offline
+
+functions:
+  addUser:
+    handler: src/main/app.AddUser
+    events:
+      - http: "POST /users"
+  saveUser:
+    handler: src/main/app.SaveUser
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - UserSQSQueue
+              - Arn
+  saveUserSNS:
+    handler: src/main/app.SaveUserSNS
+    events:
+      - sns: sns-save-user
